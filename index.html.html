@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>SafetyVerse - El Camino a Producción</title>
+<style>
+:root{--navy:#0F2438;--blue:#173C5E;--mid:#2C6396;--white:#F5F7FA;--gray:#B8C2CC;--yellow:#FFC72C;--red:#E53E3E;--green:#3FA66E}
+*{box-sizing:border-box}html,body{margin:0;background:#08131f;color:var(--white);font-family:Arial,sans-serif}
+#app{max-width:1100px;margin:auto;background:var(--navy);min-height:100vh}
+#hud{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:10px 14px;border-bottom:3px solid var(--yellow);background:linear-gradient(#173c5e,#0f2438)}
+.title{width:100%;text-align:center;color:var(--yellow);font-weight:900;letter-spacing:.12em;font-size:14px}
+.stat{min-width:70px}.label{display:block;font-size:9px;color:var(--gray);text-transform:uppercase}.value{font-weight:900;font-size:16px}
+#reset{margin-left:auto;background:none;border:1px solid var(--gray);color:white;padding:5px 9px;border-radius:5px;cursor:pointer}
+#gameWrap{position:relative;background:#263746}
+canvas{display:block;width:100%;height:auto}
+#message{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:var(--blue);border:1px solid var(--yellow);padding:8px 14px;border-radius:5px;font-weight:800;opacity:0;pointer-events:none;transition:.2s}
+#message.show{opacity:1}
+#prompt{position:absolute;left:50%;bottom:35px;transform:translateX(-50%);background:var(--yellow);color:#0f2438;padding:8px 16px;border-radius:5px;font-weight:900;display:none}
+#controls{display:flex;justify-content:space-between;padding:12px 16px 18px;background:#08131f}
+button.ctrl{width:58px;height:48px;background:#173c5e;color:white;border:2px solid #2c6396;border-radius:8px;font-size:18px;font-weight:900;cursor:pointer;touch-action:none}
+button.ctrl:active{background:#2c6396}
+#report{background:var(--yellow);color:#0f2438;border-color:var(--yellow)}
+#jump{background:var(--green);border-color:var(--green);width:90px}
+.overlay{position:absolute;inset:0;background:rgba(5,12,20,.9);display:flex;align-items:center;justify-content:center;padding:20px;z-index:5}
+.hidden{display:none!important}
+.card{width:min(470px,95%);background:#173c5e;border:2px solid var(--yellow);border-radius:10px;padding:24px;box-shadow:0 15px 50px #000}
+.card.alert{border-color:var(--red)}
+.eyebrow{font-size:11px;color:var(--yellow);font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+.alert .eyebrow{color:var(--red)}
+h2{margin:7px 0 12px}p,li{color:#d0d8df;line-height:1.5;font-size:14px}
+.primary{width:100%;margin-top:16px;padding:13px;border:0;border-radius:6px;background:var(--yellow);color:#0f2438;font-weight:900;cursor:pointer}
+.keys{display:grid;gap:7px;margin:15px 0}.key{background:#0f2438;padding:7px;border-radius:5px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.box{background:#0f2438;padding:10px;border-radius:5px}.box small{display:block;color:#aebbc6;text-transform:uppercase}.box strong{color:var(--yellow);font-size:18px}
+</style>
+</head>
+<body>
+<div id="app">
+<header id="hud">
+<div class="title">SAFETYVERSE · NIVEL 1 — EL CAMINO A PRODUCCIÓN</div>
+<div class="stat"><span class="label">Vidas</span><span class="value" id="lives">❤️❤️❤️❤️❤️</span></div>
+<div class="stat"><span class="label">Puntos</span><span class="value" id="score">0</span></div>
+<div class="stat"><span class="label">Tiempo</span><span class="value" id="time">00:00</span></div>
+<div class="stat"><span class="label">Safety Score</span><span class="value" id="safety">100%</span></div>
+<div class="stat"><span class="label">Riesgos</span><span class="value" id="risks">0/6</span></div>
+<div class="stat"><span class="label">Reportes</span><span class="value" id="reports">0/2</span></div>
+<button id="reset">↻ Reiniciar</button>
+</header>
+
+<div id="gameWrap">
+<canvas id="game" width="960" height="480"></canvas>
+<div id="message"></div>
+<div id="prompt">E · REPORTAR CONDICIÓN INSEGURA</div>
+
+<div id="overlay" class="overlay">
+<div class="card" id="card"></div>
+</div>
+</div>
+
+<div id="controls">
+<div>
+<button class="ctrl" id="left">◀</button>
+<button class="ctrl" id="right">▶</button>
+</div>
+<div>
+<button class="ctrl" id="report">E</button>
+<button class="ctrl" id="jump">SALTAR</button>
+</div>
+</div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const W=960,H=480,G=400,LEVEL=3650;
+const C={
+sky1:"#2C4A66",sky2:"#4A6B8A",building:"#1B3550",win:"#3D6A8F",
+floor:"#4A5568",edge:"#2B343D",yellow:"#FFC72C",red:"#E53E3E",
+water:"#4FA3D1",oil:"#1A1712",cable:"#1A1A1A",skin:"#D9A876",
+blue:"#173C5E",overall:"#1B4D7A",helmet:"#FFC72C",green:"#3FA66E"
+};
+
+let state="intro",lives=5,score=0,risks=0,reports=0,start=0,elapsed=0,camera=0;
+const keys=new Set(),just=new Set(),touch={left:false,right:false,report:false};
+const player={x:60,y:G-54,w:32,h:54,vx:0,vy:0,ground:true,face:1};
+
+const hazards=[
+{id:"water",type:"slip",x:650,w:90,reportA:540,reportB:650,done:false,seen:false,
+title:"Te resbalaste.",text:"Había un derrame de agua en el piso y cruzaste directamente sobre la superficie contaminada.",
+tips:["No camines sobre derrames.","Reporta la condición inmediatamente.","Señaliza el área hasta que sea controlada."]},
+{id:"hole",type:"hole",x:1050,w:66,done:false,seen:false,
+title:"Caíste en un bache.",text:"Había un desnivel en el piso sin señalización ni protección.",
+tips:["Inspecciona las rutas de circulación.","Señaliza los desniveles.","Reporta las irregularidades."]},
+{id:"cable1",type:"cable",x:1300,w:45,done:false,seen:false,
+title:"Tropezaste con un cable.",text:"Un cable atravesaba la ruta de circulación.",
+tips:["Mantén las rutas libres.","Usa canaletas o pasos elevados.","Reporta obstáculos."]},
+{id:"oil",type:"slip",x:1780,w:100,reportA:1660,reportB:1780,done:false,seen:false,
+title:"Resbalaste en aceite.",text:"Un derrame de aceite industrial no estaba contenido ni señalizado.",
+tips:["No camines sobre derrames.","Contén y absorbe el aceite.","Reporta la condición."]},
+{id:"cable2",type:"cable",x:2050,w:45,done:false,seen:false,
+title:"Tropezaste con un cable eléctrico.",text:"Un cable cruzaba el pasillo sin protección.",
+tips:["No tiendas cables sobre rutas.","Usa protección física.","Reporta cables expuestos."]},
+{id:"forklift",type:"forklift",x:2200,w:460,done:false,seen:false,signal:false}
+];
+
+const forklift={x:2260,dir:1,v:2.4,min:2260,max:2580,paused:false};
+
+function el(id){return document.getElementById(id)}
+function updateHUD(){
+el("lives").textContent="❤️".repeat(lives)+"🖤".repeat(5-lives);
+el("score").textContent=score.toLocaleString("es-MX");
+el("time").textContent=fmt(elapsed);
+el("risks").textContent=risks+"/6";
+el("reports").textContent=reports+"/2";
+let s=Math.max(0,Math.min(100,100-(5-lives)*12+reports*8));
+el("safety").textContent=s+"%";
+}
+function fmt(t){return String(Math.floor(t/60)).padStart(2,"0")+":"+String(Math.floor(t%60)).padStart(2,"0")}
+function msg(t){const m=el("message");m.textContent=t;m.classList.add("show");clearTimeout(msg.timer);msg.timer=setTimeout(()=>m.classList.remove("show"),1600)}
+function showPrompt(v){el("prompt").style.display=v?"block":"none"}
+function overlay(html){el("card").innerHTML=html;el("overlay").classList.remove("hidden")}
+function hideOverlay(){el("overlay").classList.add("hidden")}
+
+function intro(){
+state="intro";
+overlay(`
+<div class="eyebrow">SafetyVerse · Nivel 1</div>
+<h2>El Camino a Producción</h2>
+<p>Llega hasta producción atravesando una planta industrial. Los obstáculos representan riesgos reales. No se trata solamente de llegar: debes observar, evitar y reportar.</p>
+<div class="keys">
+<div class="key">◀ ▶ / A D · Mover</div>
+<div class="key">ESPACIO / W · Saltar</div>
+<div class="key">E · Reportar condición insegura</div>
+</div>
+<button class="primary" id="startBtn">COMENZAR RECORRIDO</button>`);
+el("startBtn").addEventListener("click",startGame);
+}
+
+function startGame(){
+hideOverlay();state="playing";start=performance.now();player.x=60;player.y=G-player.h;updateHUD();
+}
+
+function reset(){
+lives=5;score=0;risks=0;reports=0;elapsed=0;
+hazards.forEach(h=>{h.done=false;h.seen=false;h.signal=false});
+forklift.x=forklift.min;forklift.dir=1;forklift.paused=false;
+player.x=60;player.y=G-player.h;player.vx=0;player.vy=0;player.ground=true;
+start=performance.now();state="playing";hideOverlay();updateHUD();
+}
+
+function lose(h){
+h.done=true;lives--;updateHUD();
+if(lives<=0){
+state="gameover";
+overlay(`<div class="eyebrow" style="color:#E53E3E">RECORRIDO INTERRUMPIDO</div>
+<h2>Sin vidas restantes</h2>
+<p>${h.text}</p><div class="grid"><div class="box"><small>Puntaje</small><strong>${score}</strong></div><div class="box"><small>Riesgos</small><strong>${risks}/6</strong></div></div>
+<button class="primary" id="again">REINTENTAR</button>`);
+el("again").onclick=reset;return;
+}
+state="modal";
+overlay(`<div class="eyebrow" style="color:#E53E3E">⚠ PERDISTE UNA VIDA</div>
+<h2>${h.title}</h2><p>${h.text}</p><p style="color:#FFC72C;font-weight:900">¿CÓMO PREVENIRLO?</p>
+<ul>${h.tips.map(x=>"<li>"+x+"</li>").join("")}</ul>
+<button class="primary" id="continue">CONTINUAR</button>`);
+el("continue").onclick=()=>{
+hideOverlay();player.x=Math.max(30,h.x-100);player.y=G-player.h;player.vx=0;player.vy=0;state="playing";start=performance.now()-elapsed*1000;
+};
+}
+
+function report(h){
+if(h.done)return;
+h.done=true;h.seen=true;reports++;risks++;score+=500;updateHUD();showPrompt(false);
+msg("CONDICIÓN INSEGURA REPORTADA · +500");
+}
+
+function checkHazards(){
+for(const h of hazards){
+if(h.done)continue;
+
+if(h.type==="slip"){
+const zone=player.x+player.w>h.reportA&&player.x<h.reportB&&player.ground;
+if(zone){
+showPrompt(true);
+if(keys.has("KeyE")||touch.report){report(h);touch.report=false;return}
+}else if(player.x>h.reportB)showPrompt(false);
+
+if(!h.done&&player.x+player.w>h.x&&player.x<h.x+h.w&&player.ground){showPrompt(false);lose(h);return}
+if(!h.done&&player.x>h.x+h.w){h.done=true;risks++;score+=100;updateHUD();msg("RIESGO EVITADO · +100")}
+}
+else if(h.type==="hole"||h.type==="cable"){
+const hit=player.x+player.w>h.x&&player.x<h.x+h.w&&player.ground;
+if(hit){lose(h);return}
+if(!h.done&&player.x>h.x+h.w){h.done=true;risks++;score+=100;updateHUD();msg("RIESGO IDENTIFICADO · +100")}
+}
+else if(h.type==="forklift"){
+const inZone=player.x>h.x-80&&player.x<h.x+h.w;
+if(inZone){
+showPrompt(true);
+if(keys.has("KeyE")||touch.report){h.signal=true;forklift.paused=true;msg("OPERADOR TE VIO · CRUCE SEGURO");}
+else forklift.paused=false;
+}else showPrompt(false);
+
+const hit=!forklift.paused&&player.x<forklift.x+70&&player.x+player.w>forklift.x;
+if(hit){showPrompt(false);lose({...h,x:h.x,title:"Casi fuiste golpeado por un montacargas.",text:"Entraste en la zona de tránsito sin esperar ni señalizar al operador.",tips:["Espera el espacio seguro.","Señaliza al operador.","Confirma contacto visual."]});return}
+if(!h.done&&player.x>h.x+h.w){h.done=true;risks++;score+=h.signal?150:100;updateHUD();showPrompt(false);msg(h.signal?"SEÑALIZACIÓN CORRECTA · +150":"CRUCE SEGURO · +100")}
+}
+}
+}
+
+function update(){
+if(state!=="playing")return;
+elapsed=(performance.now()-start)/1000;
+let d=0;
+if(keys.has("ArrowLeft")||keys.has("KeyA")||touch.left)d=-1;
+if(keys.has("ArrowRight")||keys.has("KeyD")||touch.right)d=1;
+player.vx=d*4.6;if(d)player.face=d;
+if((just.has("Space")||just.has("ArrowUp")||just.has("KeyW")||touch.jump)&&player.ground){player.vy=-15;player.ground=false;touch.jump=false}
+player.vy+=.62;player.x+=player.vx;player.y+=player.vy;
+if(player.y>=G-player.h){player.y=G-player.h;player.vy=0;player.ground=true}else player.ground=false;
+player.x=Math.max(0,Math.min(LEVEL,player.x));
+
+if(!forklift.paused){forklift.x+=forklift.v*forklift.dir;if(forklift.x>forklift.max){forklift.x=forklift.max;forklift.dir=-1}if(forklift.x<forklift.min){forklift.x=forklift.min;forklift.dir=1}}
+checkHazards();
+if(player.x>3500){complete()}
+updateHUD();just.clear();
+}
+
+function complete(){
+if(state!=="playing")return;
+state="complete";score+=1000+(lives===5?500:0)+(elapsed<75?500:0);updateHUD();
+overlay(`<div class="eyebrow">NIVEL COMPLETADO</div><h2>El Camino a Producción</h2>
+<div class="grid">
+<div class="box"><small>Puntaje</small><strong>${score}</strong></div>
+<div class="box"><small>Tiempo</small><strong>${fmt(elapsed)}</strong></div>
+<div class="box"><small>Vidas</small><strong>${lives}/5</strong></div>
+<div class="box"><small>Riesgos</small><strong>${risks}/6</strong></div>
+<div class="box"><small>Reportes</small><strong>${reports}/2</strong></div>
+<div class="box"><small>Safety Score</small><strong>${el("safety").textContent}</strong></div>
+</div>
+<p>Tu objetivo no era solamente sobrevivir. Era aprender a reconocer condiciones inseguras y tomar decisiones preventivas.</p>
+<button class="primary" id="again">JUGAR DE NUEVO</button>`);
+el("again").onclick=reset;
+}
+
+function draw(){
+ctx.clearRect(0,0,W,H);
+camera=Math.max(0,Math.min(player.x-W/2,LEVEL-W));
+
+const bg=ctx.createLinearGradient(0,0,0,G);bg.addColorStop(0,C.sky1);bg.addColorStop(1,C.sky2);ctx.fillStyle=bg;ctx.fillRect(0,0,W,G);
+
+for(let x=-300;x<LEVEL+500;x+=360){let sx=x-camera*.3,h=150+(Math.abs(x)%3)*25;if(sx>-200&&sx<W+200){ctx.fillStyle=C.building;ctx.fillRect(sx,G-h,170,h);ctx.fillStyle=C.win;for(let yy=G-h+18;yy<G-15;yy+=27)for(let xx=sx+15;xx<sx+155;xx+=32)ctx.fillRect(xx,yy,14,13)}}
+
+ctx.fillStyle=C.floor;ctx.fillRect(0,G,W,H-G);ctx.fillStyle=C.edge;ctx.fillRect(0,G,W,5);
+ctx.strokeStyle="#3A4552";for(let x=(-camera%80);x<W;x+=80){ctx.beginPath();ctx.moveTo(x,G+5);ctx.lineTo(x,H);ctx.stroke()}
+
+function sx(x){return x-camera}
+function sign(x,y,t,w){let q=sx(x);if(q<-w||q>W+w)return;ctx.fillStyle="#2B343D";ctx.fillRect(q-2,y-2,w+4,34);ctx.fillStyle=C.white||"#F5F7FA";ctx.fillRect(q,y,w,30);ctx.fillStyle=C.blue;ctx.font="bold 11px Arial";ctx.textAlign="center";ctx.fillText(t,q+w/2,y+19);ctx.textAlign="left"}
+sign(30,G-70,"ENTRADA A PLANTA",150);sign(760,G-64,"PASILLO",90);sign(2760,G-64,"PRODUCCIÓN",120);sign(3570,G-70,"SALIDA",110);
+
+for(const h of hazards){
+let q=sx(h.x);
+if(q<-150||q>W+150)continue;
+if(h.type==="slip"){
+ctx.fillStyle=h.id==="oil"?C.oil:C.water;ctx.beginPath();ctx.ellipse(q+h.w/2,G+6,h.w/2,10,0,0,Math.PI*2);ctx.fill();
+if(!h.done){ctx.fillStyle=C.yellow;ctx.beginPath();ctx.moveTo(q+h.w/2,G-85);ctx.lineTo(q+h.w/2-9,G-69);ctx.lineTo(q+h.w/2+9,G-69);ctx.closePath();ctx.fill();ctx.fillStyle=C.edge;ctx.font="bold 12px Arial";ctx.textAlign="center";ctx.fillText("!",q+h.w/2,G-72);ctx.textAlign="left"}
+}else if(h.type==="hole"){
+if(!h.done){ctx.fillStyle="#0A0F14";ctx.fillRect(q,G-3,h.w,H-G+3);ctx.strokeStyle="#1E262E";ctx.lineWidth=5;ctx.strokeRect(q,G-3,h.w,10)}
+}else if(h.type==="cable"){
+if(!h.done){ctx.strokeStyle=C.cable;ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(q,G);ctx.quadraticCurveTo(q+15,G-15,q+25,G);ctx.quadraticCurveTo(q+35,G+8,q+h.w,G);ctx.stroke();ctx.fillStyle=C.red;ctx.fillRect(q-6,G-7,7,7);ctx.fillRect(q+h.w,G-7,7,7)}
+}
+}
+
+if(!hazards[5].done){
+sign(2130,G-84,"⚠ ZONA MONTACARGAS",160);
+let q=sx(forklift.x);ctx.fillStyle="#B58A00";ctx.fillRect(q,G-42,74,8);ctx.fillStyle=C.yellow;ctx.fillRect(q,G-42,58,34);ctx.fillRect(q+58,G-56,8,42);ctx.fillStyle=C.edge;ctx.beginPath();ctx.arc(q+12,G,7,0,Math.PI*2);ctx.arc(q+54,G,7,0,Math.PI*2);ctx.fill();
+}
+
+const px=sx(player.x),py=player.y;
+ctx.save();ctx.translate(px+16,0);ctx.scale(player.face,1);ctx.translate(-16,0);
+ctx.fillStyle="#123A5C";ctx.fillRect(4,py+34,10,20);ctx.fillRect(18,py+34,10,20);ctx.fillStyle=C.edge;ctx.fillRect(3,py+52,12,4);ctx.fillRect(17,py+52,12,4);
+ctx.fillStyle=C.overall;ctx.fillRect(2,py+14,28,24);ctx.fillStyle=C.yellow;ctx.fillRect(2,py+20,28,4);ctx.fillStyle=C.skin;ctx.beginPath();ctx.arc(16,py+8,9,0,Math.PI*2);ctx.fill();ctx.fillStyle=C.helmet;ctx.beginPath();ctx.arc(16,py+4,10,Math.PI,0);ctx.fill();ctx.fillRect(6,py+2,20,3);ctx.restore();
+}
+
+function loop(){update();draw();requestAnimationFrame(loop)}
+
+window.addEventListener("keydown",e=>{
+if(["ArrowLeft","ArrowRight","ArrowUp","Space"].includes(e.code))e.preventDefault();
+if(!keys.has(e.code))just.add(e.code);keys.add(e.code);
+});
+window.addEventListener("keyup",e=>keys.delete(e.code));
+
+function bind(id,p){
+const b=el(id);
+const on=e=>{e.preventDefault();touch[p]=true};
+const off=e=>{e.preventDefault();touch[p]=false};
+b.addEventListener("pointerdown",on);b.addEventListener("pointerup",off);b.addEventListener("pointercancel",off);b.addEventListener("pointerleave",off);
+}
+bind("left","left");bind("right","right");bind("report","report");
+el("jump").addEventListener("pointerdown",e=>{e.preventDefault();touch.jump=true});
+el("reset").onclick=reset;
+
+updateHUD();intro();loop();
+})();
+</script>
+</body>
+</html>
